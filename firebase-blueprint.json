@@ -1,0 +1,88 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile tied to Firebase Auth UID",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["Aktif", "Nonaktif"] }
+      },
+      "required": ["uid", "displayName", "email", "status"]
+    },
+    "Community": {
+      "title": "Community",
+      "description": "Football community details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "primaryColor": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["Aktif", "Nonaktif"] },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "status"]
+    },
+    "CommunityMember": {
+      "title": "CommunityMember",
+      "description": "Membership of a user in a specific community",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "communityId": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["ADMIN", "MEMBER"] },
+        "status": { "type": "string", "enum": ["AKTIF", "NONAKTIF"] },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "position": { "type": "string", "maxLength": 50 },
+        "jerseyNumber": { "type": "number" },
+        "joinedAt": { "type": "string" }
+      },
+      "required": ["uid", "communityId", "role", "status"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "Match event for a community",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "communityId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "date": { "type": "string", "maxLength": 20 },
+        "kickoffTime": { "type": "string", "maxLength": 10 },
+        "venue": { "type": "string", "maxLength": 150 },
+        "standardFee": { "type": "number" },
+        "playerQuota": { "type": "number" },
+        "status": { "type": "string", "enum": ["Draft", "Aktif", "Selesai", "Dibatalkan"] },
+        "cancellationDeadline": { "type": "string" },
+        "createdBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "communityId", "title", "date", "standardFee", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "MABOL user profile document"
+    },
+    "/communities/{communityId}": {
+      "schema": "Community",
+      "description": "Community details"
+    },
+    "/communities/{communityId}/members/{uid}": {
+      "schema": "CommunityMember",
+      "description": "Community member record linking user to community"
+    },
+    "/communities/{communityId}/matches/{matchId}": {
+      "schema": "Match",
+      "description": "Matches belonging to a specific community"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "MABOL - Manajemen Sepak Bola Komunitas",
+  "description": "Platform manajemen komunitas sepak bola modern, kelola pertandingan, HTM, kas, jersey, dan kehadiran.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

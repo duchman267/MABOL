@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default Deny All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isMember(communityId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid));
+    }
+
+    function isAdmin(communityId) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid)).data.role == 'ADMIN';
+    }
+
+    // 2. User Profiles
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      allow update: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      allow delete: if false;
+    }
+
+    // 3. Communities
+    match /communities/{communityId} {
+      allow get: if isSignedIn() && isValidId(communityId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(communityId);
+      allow update: if isSignedIn() && isValidId(communityId) && (isAdmin(communityId) || resource.data.createdBy == request.auth.uid);
+      allow delete: if false;
+
+      // Community Members
+      match /members/{memberId} {
+        allow get: if isSignedIn() && isValidId(memberId);
+        allow list: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(memberId) && (request.auth.uid == memberId || isAdmin(communityId));
+        allow update: if isSignedIn() && isValidId(memberId) && (isAdmin(communityId) || request.auth.uid == memberId);
+        allow delete: if isSignedIn() && isValidId(memberId) && (isAdmin(communityId) || request.auth.uid == memberId);
+      }
+
+      // Community Matches
+      match /matches/{matchId} {
+        allow get, list: if isSignedIn() && isValidId(communityId) && isMember(communityId);
+        allow create, update, delete: if isSignedIn() && isValidId(communityId) && isAdmin(communityId);
+
+        match /{sub=**} {
+          allow read: if isSignedIn() && isValidId(communityId) && isMember(communityId);
+          allow write: if isSignedIn() && isValidId(communityId) && isAdmin(communityId);
+        }
+      }
+
+      // Other Community Subcollections (Finances, Orders, Proposals, etc.)
+      match /{collectionName}/{docId} {
+        allow read: if isSignedIn() && isValidId(communityId) && isMember(communityId);
+        allow write: if isSignedIn() && isValidId(communityId) && (
+          isAdmin(communityId) ||
+          (collectionName == 'proposals' && request.resource.data.submittedBy == request.auth.uid) ||
+          (collectionName == 'penaltyScores' && request.resource.data.userId == request.auth.uid) ||
+          (collectionName == 'jerseyOrders' && request.resource.data.memberId == request.auth.uid)
+        );
+      }
+    }
+  }
+}
