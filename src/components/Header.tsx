@@ -25,7 +25,6 @@ export const Header: React.FC = () => {
     activeCommunity,
     communities,
     switchCommunity,
-    createCommunity,
     notifications,
     markNotificationAsRead,
     resetDemoData,
@@ -34,25 +33,8 @@ export const Header: React.FC = () => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showCommunityMenu, setShowCommunityMenu] = useState(false);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
-  const [showNewCommunityModal, setShowNewCommunityModal] = useState(false);
-  const [newCommName, setNewCommName] = useState('');
-  const [newCommDesc, setNewCommDesc] = useState('');
 
   const unreadNotifs = notifications.filter((n) => !n.read);
-
-  const handleCreateCommunity = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCommName.trim()) return;
-    createCommunity({
-      name: newCommName.trim(),
-      description: newCommDesc.trim() || 'Komunitas sepak bola',
-      primaryColor: '#1261FF',
-    });
-    setNewCommName('');
-    setNewCommDesc('');
-    setShowNewCommunityModal(false);
-    setShowCommunityMenu(false);
-  };
 
   return (
     <>
@@ -300,68 +282,6 @@ export const Header: React.FC = () => {
                 );
               })}
             </div>
-
-            <button
-              onClick={() => {
-                setShowCommunityMenu(false);
-                setShowNewCommunityModal(true);
-              }}
-              className="w-full py-2.5 px-3 bg-gray-50 hover:bg-gray-100 rounded-xl text-xs font-bold text-[#1261FF] border border-blue-100 flex items-center justify-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Komunitas Baru</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Tambah Komunitas */}
-      {showNewCommunityModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl p-5 max-w-sm w-full shadow-2xl">
-            <h3 className="font-bold text-[#071A33] text-base mb-1">Daftarkan Komunitas Baru</h3>
-            <p className="text-xs text-gray-500 mb-4">Buat ruang komunitas baru di platform MABOL</p>
-
-            <form onSubmit={handleCreateCommunity} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Nama Komunitas</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Sangkuriang FC"
-                  value={newCommName}
-                  onChange={(e) => setNewCommName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-hidden focus:border-[#1261FF]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Deskripsi Singkat</label>
-                <textarea
-                  rows={2}
-                  placeholder="Deskripsi atau slogan komunitas..."
-                  value={newCommDesc}
-                  onChange={(e) => setNewCommDesc(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-hidden focus:border-[#1261FF]"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowNewCommunityModal(false)}
-                  className="flex-1 py-2.5 text-xs font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl"
-                >
-                  BATAL
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 text-xs font-bold text-white bg-[#1261FF] hover:bg-blue-700 rounded-xl shadow-md shadow-blue-500/20"
-                >
-                  SIMPAN
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

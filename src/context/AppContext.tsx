@@ -71,6 +71,7 @@ interface AppContextType {
   joinCommunity: (communityId: string, role?: 'ADMIN' | 'MEMBER') => Promise<void>;
   pendingMembershipCount: number;
   refreshMembershipRequests: () => Promise<void>;
+  refreshAuthSession: () => Promise<boolean>;
   isServerOnline: boolean;
   checkServerConnectivity: () => Promise<boolean>;
 
@@ -95,7 +96,7 @@ interface AppContextType {
     photo?: string;
   }) => Promise<Member>;
   updateManualMember: (id: string, data: Partial<Member>) => Promise<void>;
-  deleteManualMember: (id: string) => Promise<void>;
+  deleteManualMember: (id: string) => Promise<{ success: boolean; message: string; action?: 'deleted' | 'deactivated' }>;
   refreshMembers: (targetCommunityId?: string) => Promise<void>;
   isMembersLoading: boolean;
   membersSource: 'server' | 'cache';
@@ -332,6 +333,53 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [memberships]);
 
+  // Fungsi pemeriksaan sesi dan verifikasi membership terpusat dari server
+  const refreshAuthSession = async (): Promise<boolean> => {
+    try {
+      const serverAuth = await fetchCurrentAuthFromServer();
+      if (serverAuth !== undefined) {
+        if (serverAuth && serverAuth.user && serverAuth.user.status === 'ACTIVE') {
+          setUserProfile(serverAuth.user);
+          if (serverAuth.memberships && serverAuth.memberships.length > 0) {
+            const mapped = serverAuth.memberships.map((m: any) => ({
+              uid: m.userId,
+              userId: m.userId,
+              communityId: m.communityId,
+              role: m.role,
+              status: m.status,
+              displayName: m.displayName,
+              position: m.position,
+              jerseyNumber: m.jerseyNumber,
+              joinedAt: m.joinedAt,
+            }));
+            setMemberships((prev) => {
+              const other = prev.filter(
+                (m) => m.userId !== serverAuth.user.id && m.uid !== serverAuth.user.id
+              );
+              return [...other, ...mapped];
+            });
+            return mapped.some((m: any) => m.communityId === 'comm-ck17' && m.status === 'AKTIF');
+          } else {
+            // Jika server mengembalikan memberships kosong, bersihkan keanggotaan lokal untuk user ini
+            setMemberships((prev) =>
+              prev.filter((m) => m.userId !== serverAuth.user.id && m.uid !== serverAuth.user.id)
+            );
+            return false;
+          }
+        } else {
+          logoutManual();
+          setUserProfile(null);
+          setMemberships([]);
+          return false;
+        }
+      }
+      return false;
+    } catch (err) {
+      console.warn('[AppContext] Error refreshing auth session:', err);
+      return false;
+    }
+  };
+
   // Cek sesi login saat mount
   useEffect(() => {
     const checkAuth = async () => {
@@ -339,44 +387,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         await initializeAuth();
         const session = getCurrentSession();
         if (session && session.userId) {
-          // 1. Cek sesi terpusat dari server backend jika online
-          const serverAuth = await fetchCurrentAuthFromServer();
-          if (serverAuth !== undefined) {
-            if (serverAuth && serverAuth.user && serverAuth.user.status === 'ACTIVE') {
-              setUserProfile(serverAuth.user);
-              if (serverAuth.memberships && serverAuth.memberships.length > 0) {
-                setMemberships((prev) => {
-                  const other = prev.filter(
-                    (m) => m.userId !== serverAuth.user.id && m.uid !== serverAuth.user.id
-                  );
-                  const mapped = serverAuth.memberships.map((m: any) => ({
-                    uid: m.userId,
-                    userId: m.userId,
-                    communityId: m.communityId,
-                    role: m.role,
-                    status: m.status,
-                    displayName: m.displayName,
-                    position: m.position,
-                    jerseyNumber: m.jerseyNumber,
-                    joinedAt: m.joinedAt,
-                  }));
-                  return [...other, ...mapped];
-                });
-              }
-            } else {
-              // Sesi tidak valid di server
-              logoutManual();
-              setUserProfile(null);
-            }
-          } else {
-            // 2. Offline fallback: cek akun local storage
-            const profile = getUserProfileById(session.userId);
-            if (profile && profile.status === 'ACTIVE') {
-              setUserProfile(profile);
-            } else {
-              logoutManual();
-              setUserProfile(null);
-            }
+          const hasActiveMembership = await refreshAuthSession();
+          if (!hasActiveMembership) {
+            // Sesi ada namun user belum/tidak memiliki membership aktif di server
           }
         } else {
           setUserProfile(null);
@@ -484,52 +497,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setDb((prev) => ({ ...prev, activeCommunityId: communityId }));
   };
 
-  const joinCommunity = async (communityId: string, role: 'ADMIN' | 'MEMBER' = 'MEMBER') => {
+  const joinCommunity = async (communityId: string = 'comm-ck17') => {
     if (!userProfile) return;
-    membersCoordinatorRef.current.setActiveCommunityId(communityId);
-    const now = new Date().toISOString();
-    const newMembership: CommunityMembership = {
-      uid: userProfile.id,
-      userId: userProfile.id,
+    // Pendaftaran komunitas wajib melalui alur pengajuan resmi ke server
+    await submitMembershipRequestToServer({
       communityId,
-      role,
-      status: 'AKTIF',
-      displayName: userProfile.name,
-      joinedAt: now,
-    };
-
-    setMemberships((prev) => {
-      const filtered = prev.filter(
-        (m) => !(m.communityId === communityId && (m.uid === userProfile.id || m.userId === userProfile.id))
-      );
-      return [...filtered, newMembership];
+      notes: 'Pengajuan bergabung ke komunitas',
     });
-
-    setDb((prev) => ({ ...prev, activeCommunityId: communityId }));
+    await refreshMembershipRequests();
   };
 
-  const createCommunity = async (data: Omit<Community, 'id' | 'createdAt' | 'status'>): Promise<string> => {
-    const newCommunityId = `comm-${Date.now()}`;
-    membersCoordinatorRef.current.setActiveCommunityId(newCommunityId);
-    const newCommunity: Community = {
-      ...data,
-      id: newCommunityId,
-      status: 'Aktif',
-      createdAt: new Date().toISOString(),
-    };
-
-    setDb((prev) => ({
-      ...prev,
-      communities: [...prev.communities, newCommunity],
-      activeCommunityId: newCommunityId,
-    }));
-
-    // Pembuat otomatis menjadi ADMIN komunitas baru tersebut!
-    if (userProfile) {
-      await joinCommunity(newCommunityId, 'ADMIN');
-    }
-
-    return newCommunityId;
+  const createCommunity = async (_data: Omit<Community, 'id' | 'createdAt' | 'status'>): Promise<string> => {
+    // Pencegahan privilege escalation: pembuatan komunitas baru tidak diizinkan.
+    throw new Error('Pembuatan komunitas baru dibatasi. Komunitas resmi MABOL adalah Cornerkick17 OLAHGAYA.');
   };
 
   // Keep coordinator active community in sync with activeCommunity
@@ -635,8 +615,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }));
         return [...other, ...mapped];
       });
+    } else {
+      // Pastikan akun tanpa keanggotaan aktif bersih dari membership rogue/lokal
+      setMemberships((prev) => prev.filter((m) => m.userId !== res.id && m.uid !== res.id));
     }
-    refreshMembershipRequests();
+    await refreshMembershipRequests();
   };
 
   const register = async (
@@ -650,15 +633,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ) => {
     const res = await registerManual(name, email, pass);
     setUserProfile(res);
+    // User baru belum disetujui admin, bersihkan keanggotaan aktif
+    setMemberships((prev) => prev.filter((m) => m.userId !== res.id && m.uid !== res.id));
 
     // Otomatis ajukan bergabung ke Cornerkick17 OLAHGAYA (comm-ck17) sebagai komunitas default
     try {
-      await submitMembershipRequestToServer({
+      const serverReq = await submitMembershipRequestToServer({
         communityId: 'comm-ck17',
         position: details?.position || 'Gelandang',
         jerseyNumber: details?.jerseyNumber || 10,
         notes: 'Pendaftaran anggota baru',
       });
+      if (serverReq) {
+        setDb((prev) => ({
+          ...prev,
+          membershipRequests: [
+            serverReq,
+            ...(prev.membershipRequests || []).filter((r) => r.id !== serverReq.id),
+          ],
+        }));
+      }
     } catch (reqErr: any) {
       console.warn('[AppContext] Info pengajuan keanggotaan otomatis:', reqErr?.message || reqErr);
     }
@@ -769,7 +763,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Update state & cache after server confirms
     setDb((prev) => {
-      const updatedMembers = prev.members.map((m) => (m.id === id ? updatedMember : m));
+      const updatedMembers = prev.members.map((m) =>
+        m.id === id || (m.userId && m.userId === id) ? updatedMember : m
+      );
       const updatedDb = { ...prev, members: updatedMembers };
       saveDatabase(updatedDb);
       return updatedDb;
@@ -793,7 +789,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // HAPUS ANGGOTA OLEH ADMIN
-  const deleteManualMember = async (id: string): Promise<void> => {
+  const deleteManualMember = async (
+    id: string
+  ): Promise<{ success: boolean; message: string; action?: 'deleted' | 'deactivated' }> => {
     if (!isAdmin) {
       throw new Error('Hanya Admin yang berwenang menghapus anggota.');
     }
@@ -801,25 +799,78 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       throw new Error('Akun Admin utama tidak dapat dihapus.');
     }
 
-    // Call server FIRST
-    await deleteMemberOnServer(id);
+    // Resolve target member in local state to extract both member ID and user/account ID
+    const targetMember = db.members.find((m) => m.id === id || m.userId === id);
+    const targetUserId = targetMember?.userId;
+    const targetMemberId = targetMember?.id || id;
+
+    if (
+      targetMember?.role === 'admin' &&
+      (targetUserId === 'usr-admin-dicky' || targetMember.email === 'dickymaulanazayn@gmail.com')
+    ) {
+      throw new Error('Akun Admin utama tidak dapat dihapus.');
+    }
+
+    // Call server FIRST (pessimistic: if network or server fails, it throws here and local state is untouched)
+    const result = await deleteMemberOnServer(id, activeCommunity.id);
 
     // Refresh state authoritatively from server
     await refreshMembers();
 
-    // Update state & cache immediately
-    setDb((prev) => {
-      const updatedMembers = prev.members.filter((m) => m.id !== id && m.userId !== id);
-      const updatedDb = { ...prev, members: updatedMembers };
-      saveDatabase(updatedDb);
-      return updatedDb;
-    });
+    if (result.action === 'deactivated') {
+      // Backend soft-deactivated member due to historical records
+      setDb((prev) => {
+        const updatedMembers = prev.members.map((m) =>
+          m.id === targetMemberId || (targetUserId && m.userId === targetUserId)
+            ? { ...m, status: 'Nonaktif' as const }
+            : m
+        );
+        const updatedDb = { ...prev, members: updatedMembers };
+        saveDatabase(updatedDb);
+        return updatedDb;
+      });
 
-    setMemberships((prevM) =>
-      prevM.filter(
-        (m) => !((m.userId === id || m.uid === id) && m.communityId === activeCommunity.id)
-      )
-    );
+      setMemberships((prevM) =>
+        prevM.map((m) =>
+          ((targetUserId && m.userId === targetUserId) ||
+            m.userId === id ||
+            m.uid === id ||
+            m.uid === targetMemberId) &&
+          m.communityId === activeCommunity.id
+            ? { ...m, status: 'NONAKTIF' as const }
+            : m
+        )
+      );
+    } else {
+      // Backend permanently deleted member
+      setDb((prev) => {
+        const updatedMembers = prev.members.filter(
+          (m) =>
+            m.id !== targetMemberId &&
+            (!targetUserId || m.userId !== targetUserId) &&
+            m.id !== id &&
+            m.userId !== id
+        );
+        const updatedDb = { ...prev, members: updatedMembers };
+        saveDatabase(updatedDb);
+        return updatedDb;
+      });
+
+      setMemberships((prevM) =>
+        prevM.filter(
+          (m) =>
+            !(
+              ((targetUserId && m.userId === targetUserId) ||
+                m.userId === id ||
+                m.uid === id ||
+                m.uid === targetMemberId) &&
+              m.communityId === activeCommunity.id
+            )
+        )
+      );
+    }
+
+    return result;
   };
 
   // Match Actions
@@ -1666,7 +1717,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (status === 'Disetujui') {
       const now = new Date().toISOString();
       const newMember: Member = {
-        id: `mem-${Date.now()}`,
+        id: `mem-${req.userId}`,
         communityId: req.communityId,
         userId: req.userId,
         nickname: req.userName,
@@ -1723,6 +1774,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     await refreshMembershipRequests();
+    await refreshMembers();
   };
 
   // Jersey Orders
@@ -1818,6 +1870,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     joinCommunity,
     pendingMembershipCount,
     refreshMembershipRequests,
+    refreshAuthSession,
     isServerOnline,
     checkServerConnectivity,
 

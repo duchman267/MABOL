@@ -1,18 +1,25 @@
 import { Router, type Response } from 'express';
 import { db } from '../../src/db/index.ts';
-import { communityMembers, accounts, communityMemberships, matchParticipants } from '../../src/db/schema.ts';
+import {
+  communityMembers,
+  accounts,
+  communityMemberships,
+  matchParticipants,
+  jerseyOrders,
+} from '../../src/db/schema.ts';
 import { eq, and, or } from 'drizzle-orm';
 import { requireAuth, requireCommunityAdmin, type AuthenticatedRequest } from '../auth.ts';
 import crypto from 'crypto';
 
 export const membersRouter = Router();
 
-// 1. GET /api/members - List members of active community
+// 1. GET /api/members - List members of active community (supports optional ?status=Aktif|Nonaktif|all)
 membersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const communityId = (req.query.communityId as string) || 'comm-ck17';
+    const rawStatus = req.query.status as string | undefined;
 
-    const membersList = await db
+    let baseQuery = db
       .select({
         id: communityMembers.id,
         communityId: communityMembers.communityId,
@@ -30,9 +37,27 @@ membersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
         photoUrl: communityMembers.photoUrl,
         joinedAt: communityMembers.joinedAt,
       })
-      .from(communityMembers)
-      .where(eq(communityMembers.communityId, communityId));
+      .from(communityMembers);
 
+    if (rawStatus && rawStatus.toLowerCase() !== 'all') {
+      const normalizedStatus =
+        rawStatus.toLowerCase() === 'aktif'
+          ? 'Aktif'
+          : rawStatus.toLowerCase() === 'nonaktif'
+          ? 'Nonaktif'
+          : rawStatus;
+
+      const membersList = await baseQuery.where(
+        and(
+          eq(communityMembers.communityId, communityId),
+          eq(communityMembers.status, normalizedStatus)
+        )
+      );
+      res.status(200).json(membersList);
+      return;
+    }
+
+    const membersList = await baseQuery.where(eq(communityMembers.communityId, communityId));
     res.status(200).json(membersList);
   } catch (err: any) {
     console.error('[API members] Error fetching members:', err);
@@ -126,39 +151,43 @@ membersRouter.put(
         return;
       }
 
-      const [updated] = await db
-        .update(communityMembers)
-        .set({
-          nickname: nickname !== undefined ? nickname.trim() : existing.nickname,
-          fullName: fullName !== undefined ? fullName.trim() : existing.fullName,
-          whatsapp: whatsapp !== undefined ? whatsapp.trim() : existing.whatsapp,
-          email: email !== undefined ? (email.trim() || null) : existing.email,
-          position: position !== undefined ? position : existing.position,
-          jerseyNumber: jerseyNumber !== undefined ? Number(jerseyNumber) : existing.jerseyNumber,
-          photoUrl: photo !== undefined ? photo.trim() : existing.photoUrl,
-          status: status !== undefined ? status : existing.status,
-          updatedAt: new Date(),
-        })
-        .where(eq(communityMembers.id, existing.id))
-        .returning();
-
-      if (existing.accountId && status !== undefined) {
-        await db
-          .update(communityMemberships)
+      const updated = await db.transaction(async (tx) => {
+        const [upd] = await tx
+          .update(communityMembers)
           .set({
-            status: status === 'Aktif' ? 'AKTIF' : 'NONAKTIF',
-            displayName: nickname !== undefined ? nickname.trim() : existing.nickname,
+            nickname: nickname !== undefined ? nickname.trim() : existing.nickname,
+            fullName: fullName !== undefined ? fullName.trim() : existing.fullName,
+            whatsapp: whatsapp !== undefined ? whatsapp.trim() : existing.whatsapp,
+            email: email !== undefined ? (email.trim() || null) : existing.email,
             position: position !== undefined ? position : existing.position,
             jerseyNumber: jerseyNumber !== undefined ? Number(jerseyNumber) : existing.jerseyNumber,
+            photoUrl: photo !== undefined ? photo.trim() : existing.photoUrl,
+            status: status !== undefined ? status : existing.status,
             updatedAt: new Date(),
           })
-          .where(
-            and(
-              eq(communityMemberships.userId, existing.accountId),
-              eq(communityMemberships.communityId, existing.communityId)
-            )
-          );
-      }
+          .where(eq(communityMembers.id, existing.id))
+          .returning();
+
+        if (existing.accountId && status !== undefined) {
+          await tx
+            .update(communityMemberships)
+            .set({
+              status: status === 'Aktif' ? 'AKTIF' : 'NONAKTIF',
+              displayName: nickname !== undefined ? nickname.trim() : existing.nickname,
+              position: position !== undefined ? position : existing.position,
+              jerseyNumber: jerseyNumber !== undefined ? Number(jerseyNumber) : existing.jerseyNumber,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(communityMemberships.userId, existing.accountId),
+                eq(communityMemberships.communityId, existing.communityId)
+              )
+            );
+        }
+
+        return upd;
+      });
 
       res.status(200).json(updated);
     } catch (err: any) {
@@ -176,6 +205,8 @@ membersRouter.delete(
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       const memberId = req.params.id;
+      const targetCommunityId =
+        (req.query.communityId as string) || req.body?.communityId || 'comm-ck17';
 
       if (memberId === 'mem-admin' || memberId === 'usr-admin-dicky') {
         res.status(400).json({ error: 'Akun admin utama tidak dapat dihapus.' });
@@ -187,9 +218,12 @@ membersRouter.delete(
         .select()
         .from(communityMembers)
         .where(
-          or(
-            eq(communityMembers.id, memberId),
-            eq(communityMembers.accountId, memberId)
+          and(
+            eq(communityMembers.communityId, targetCommunityId),
+            or(
+              eq(communityMembers.id, memberId),
+              eq(communityMembers.accountId, memberId)
+            )
           )
         )
         .limit(1);
@@ -201,8 +235,11 @@ membersRouter.delete(
           .from(communityMemberships)
           .where(
             and(
-              eq(communityMemberships.userId, memberId),
-              eq(communityMemberships.communityId, 'comm-ck17')
+              or(
+                eq(communityMemberships.userId, memberId),
+                ...(isNaN(Number(memberId)) ? [] : [eq(communityMemberships.id, Number(memberId))])
+              ),
+              eq(communityMemberships.communityId, targetCommunityId)
             )
           )
           .limit(1);
@@ -223,53 +260,75 @@ membersRouter.delete(
         return;
       }
 
-      // 2. Periksa apakah anggota memiliki histori partisipasi pertandingan
+      // Proteksi admin utama
+      if (
+        existing.id === 'mem-admin' ||
+        existing.accountId === 'usr-admin-dicky' ||
+        (existing.role === 'admin' && existing.email?.toLowerCase() === 'dickymaulanazayn@gmail.com')
+      ) {
+        res.status(400).json({ error: 'Akun admin utama tidak dapat dihapus.' });
+        return;
+      }
+
+      // 2. Periksa apakah anggota memiliki riwayat pertandingan atau pemesanan jersey
       const [participant] = await db
         .select({ id: matchParticipants.id })
         .from(matchParticipants)
         .where(eq(matchParticipants.memberId, existing.id))
         .limit(1);
 
-      if (participant) {
-        // Jika ada riwayat pertandingan, lakukan penonaktifan (soft-deactivate) agar integritas relational tidak rusak
-        await db
-          .update(communityMembers)
-          .set({ status: 'Nonaktif', updatedAt: new Date() })
-          .where(eq(communityMembers.id, existing.id));
+      const [jerseyOrder] = await db
+        .select({ id: jerseyOrders.id })
+        .from(jerseyOrders)
+        .where(eq(jerseyOrders.memberId, existing.id))
+        .limit(1);
 
-        if (existing.accountId) {
-          await db
-            .update(communityMemberships)
-            .set({ status: 'NONAKTIF', updatedAt: new Date() })
-            .where(
-              and(
-                eq(communityMemberships.userId, existing.accountId),
-                eq(communityMemberships.communityId, existing.communityId)
-              )
-            );
-        }
+      const hasHistory = Boolean(participant || jerseyOrder);
+
+      if (hasHistory) {
+        // Jika ada riwayat, lakukan penonaktifan (soft-deactivate) dalam transaksi atomik agar integritas relasional tidak rusak
+        await db.transaction(async (tx) => {
+          await tx
+            .update(communityMembers)
+            .set({ status: 'Nonaktif', updatedAt: new Date() })
+            .where(eq(communityMembers.id, existing.id));
+
+          if (existing.accountId) {
+            await tx
+              .update(communityMemberships)
+              .set({ status: 'NONAKTIF', updatedAt: new Date() })
+              .where(
+                and(
+                  eq(communityMemberships.userId, existing.accountId),
+                  eq(communityMemberships.communityId, existing.communityId)
+                )
+              );
+          }
+        });
 
         res.status(200).json({
           success: true,
           action: 'deactivated',
-          message: 'Anggota memiliki riwayat pertandingan dan berhasil dinonaktifkan.',
+          message: 'Anggota memiliki riwayat aktivitas dan berhasil dinonaktifkan.',
         });
       } else {
-        // Jika tidak ada riwayat pertandingan, hapus permanen dari tabel
-        await db
-          .delete(communityMembers)
-          .where(eq(communityMembers.id, existing.id));
+        // Jika tidak ada riwayat aktivitas, hapus permanen dalam transaksi atomik
+        await db.transaction(async (tx) => {
+          await tx
+            .delete(communityMembers)
+            .where(eq(communityMembers.id, existing.id));
 
-        if (existing.accountId) {
-          await db
-            .delete(communityMemberships)
-            .where(
-              and(
-                eq(communityMemberships.userId, existing.accountId),
-                eq(communityMemberships.communityId, existing.communityId)
-              )
-            );
-        }
+          if (existing.accountId) {
+            await tx
+              .delete(communityMemberships)
+              .where(
+                and(
+                  eq(communityMemberships.userId, existing.accountId),
+                  eq(communityMemberships.communityId, existing.communityId)
+                )
+              );
+          }
+        });
 
         res.status(200).json({
           success: true,

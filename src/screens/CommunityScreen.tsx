@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Member } from '../types';
 import { formatRupiah } from '../services/financialService';
@@ -66,7 +66,11 @@ export const CommunityScreen: React.FC = () => {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
-  const [memberFilter, setMemberFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [memberFilter, setMemberFilter] = useState<'all' | 'active' | 'inactive'>('active');
+
+  useEffect(() => {
+    refreshMembers();
+  }, []);
 
   const handleReviewMembership = async (id: string, status: 'Disetujui' | 'Ditolak') => {
     try {
@@ -206,7 +210,7 @@ export const CommunityScreen: React.FC = () => {
             activeTab === 'members' ? 'bg-white text-[#1261FF] shadow-xs' : 'text-gray-500'
           }`}
         >
-          Anggota ({members.length})
+          Anggota ({members.filter((m) => m.status === 'Aktif').length})
         </button>
         <button
           onClick={() => setActiveTab('proposals')}
@@ -518,17 +522,6 @@ export const CommunityScreen: React.FC = () => {
           <div className="flex items-center gap-1.5 p-1 bg-gray-100 rounded-2xl">
             <button
               type="button"
-              onClick={() => setMemberFilter('all')}
-              className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                memberFilter === 'all'
-                  ? 'bg-white text-[#1261FF] shadow-xs'
-                  : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              Semua ({members.length})
-            </button>
-            <button
-              type="button"
               onClick={() => setMemberFilter('active')}
               className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                 memberFilter === 'active'
@@ -549,16 +542,41 @@ export const CommunityScreen: React.FC = () => {
             >
               Nonaktif ({members.filter((m) => m.status === 'Nonaktif').length})
             </button>
+            <button
+              type="button"
+              onClick={() => setMemberFilter('all')}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                memberFilter === 'all'
+                  ? 'bg-white text-[#1261FF] shadow-xs'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              Semua ({members.length})
+            </button>
           </div>
 
-          <div className="bg-white p-3.5 rounded-3xl border border-gray-100 shadow-xs divide-y divide-gray-100">
-            {members
-              .filter((mem) => {
-                if (memberFilter === 'active') return mem.status === 'Aktif';
-                if (memberFilter === 'inactive') return mem.status === 'Nonaktif';
-                return true;
-              })
-              .map((mem) => {
+          {(() => {
+            const filteredMembers = members.filter((mem) => {
+              if (memberFilter === 'active') return mem.status === 'Aktif';
+              if (memberFilter === 'inactive') return mem.status === 'Nonaktif';
+              return true;
+            });
+
+            if (filteredMembers.length === 0) {
+              return (
+                <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-xs text-center text-xs text-gray-500">
+                  Tidak ada anggota dengan status{' '}
+                  <strong className="text-gray-700">
+                    {memberFilter === 'active' ? 'Aktif' : memberFilter === 'inactive' ? 'Nonaktif' : ''}
+                  </strong>
+                  .
+                </div>
+              );
+            }
+
+            return (
+              <div className="bg-white p-3.5 rounded-3xl border border-gray-100 shadow-xs divide-y divide-gray-100">
+                {filteredMembers.map((mem) => {
               const isManual = mem.memberType === 'MANUAL';
               const isPrimaryAdmin = mem.userId === 'usr-admin-dicky' || mem.role === 'admin';
 
@@ -669,8 +687,14 @@ export const CommunityScreen: React.FC = () => {
                                 setActionLoadingId(mem.id);
                                 setActionError(null);
                                 setActionSuccess(null);
-                                await deleteManualMember(mem.id);
-                                setActionSuccess(`Anggota "${mem.nickname}" berhasil diproses.`);
+                                const result = await deleteManualMember(mem.id);
+                                if (result?.action === 'deactivated') {
+                                  setActionSuccess(
+                                    `Anggota "${mem.nickname}" memiliki riwayat aktivitas/pertandingan dan telah dinonaktifkan.`
+                                  );
+                                } else {
+                                  setActionSuccess(`Anggota "${mem.nickname}" berhasil dihapus dari komunitas.`);
+                                }
                               } catch (err: any) {
                                 setActionError(err.message || 'Gagal menghapus anggota di server.');
                               } finally {
@@ -690,6 +714,8 @@ export const CommunityScreen: React.FC = () => {
               );
             })}
           </div>
+        );
+      })()}
 
           {members.length === 1 && (
             <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 text-center text-xs text-gray-500">

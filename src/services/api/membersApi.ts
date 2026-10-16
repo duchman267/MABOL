@@ -51,11 +51,15 @@ export function mapBackendMemberToFrontend(row: BackendMemberRow): Member {
 }
 
 export async function fetchMembersFromServer(
-  communityId: string = 'comm-ck17'
+  communityId: string = 'comm-ck17',
+  status?: string
 ): Promise<Member[]> {
-  const rows = await apiGet<BackendMemberRow[]>(
-    `/api/members?communityId=${encodeURIComponent(communityId)}`
-  );
+  let url = `/api/members?communityId=${encodeURIComponent(communityId)}`;
+  if (status && status.toLowerCase() !== 'all') {
+    url += `&status=${encodeURIComponent(status)}`;
+  }
+
+  const rows = await apiGet<BackendMemberRow[]>(url);
   if (!Array.isArray(rows)) {
     throw new Error('Format data anggota dari server tidak valid (respons bukan array).');
   }
@@ -114,10 +118,11 @@ export async function updateMemberOnServer(
 }
 
 export async function deleteMemberOnServer(
-  id: string
-): Promise<{ success: boolean; message: string }> {
-  return apiDelete<{ success: boolean; message: string }>(
-    `/api/members/${encodeURIComponent(id)}`
+  id: string,
+  communityId: string = 'comm-ck17'
+): Promise<{ success: boolean; message: string; action?: 'deleted' | 'deactivated' }> {
+  return apiDelete<{ success: boolean; message: string; action?: 'deleted' | 'deactivated' }>(
+    `/api/members/${encodeURIComponent(id)}?communityId=${encodeURIComponent(communityId)}`
   );
 }
 
